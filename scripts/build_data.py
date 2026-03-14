@@ -49,15 +49,6 @@ CANAL_CATEGORIAS = {
     "PRIMERA FEDERACIÓN": "LaLiga",
 }
 
-# Patrones de canales que nos interesan (sobre el nombre base)
-FILTRO_CANALES = re.compile(
-    r"DAZN|M\+ LALIGA|MOVISTAR DEPORTES|MOVISTAR VAMOS|HYPERMOTION|"
-    r"GOL PLAY|LIGA DE CAMPEONES|EUROSPORT|TELEDEPORTE|REAL MADRID TV|"
-    r"BEIN SPORTS|SKY SPORTS|LA 1 FHD|CUATRO FHD|TELECINCO|"
-    r"PRIMERA FEDERACI",
-    re.IGNORECASE,
-)
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -95,48 +86,60 @@ def prioridad(nombre):
 
 # ---------------------------------------------------------------------------
 # Parsear hashes.txt  (formato: cabecera + secciones === CAT === + NOMBRE\nacestream://ID)
+# Devuelve lista de categorías, cada una con TODOS sus canales (sin filtrar ni deduplicar)
 # ---------------------------------------------------------------------------
 
 def build_canales(text):
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    grupos = {}
+    categorias = []
+    cat_actual = None
+    canales_actuales = []
+
+    lines = [l.rstrip() for l in text.splitlines()]
     i = 0
-    while i < len(lines) - 1:
-        line = lines[i]
-        # Saltar cabeceras y separadores
-        if (line.startswith("===") or line.startswith("AceStream")
-                or line.startswith("Generated") or line.startswith("Total:")):
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Nueva categoría: === NOMBRE ===
+        m = re.match(r"===\s*(.+?)\s*===", line)
+        if m:
+            # Guardar la anterior
+            if cat_actual and canales_actuales:
+                categorias.append({"nombre": cat_actual, "canales": canales_actuales})
+            cat_actual = m.group(1).strip().upper()
+            canales_actuales = []
             i += 1
             continue
-        # Par: NOMBRE_CANAL + acestream://ID en la siguiente línea
-        if lines[i + 1].startswith("acestream://"):
-            nombre = line
-            ace_id = lines[i + 1].replace("acestream://", "").strip()
-            if len(ace_id) == 40 and re.fullmatch(r"[0-9a-f]+", ace_id):
-                # Eliminar calidad y estrellas para obtener nombre base
-                nombre_base = re.sub(r"\s+\d+p\s*\**\s*$", "", nombre).strip()
-                nombre_base = re.sub(r"\s+\*+\s*$", "", nombre_base).strip()
-                if FILTRO_CANALES.search(nombre_base):
-                    if nombre_base not in grupos:
-                        grupos[nombre_base] = []
-                    grupos[nombre_base].append({"nombre": nombre, "id": ace_id})
-            i += 2
-        else:
-            i += 1
 
-    canales = []
-    for nombre_base, variantes in sorted(grupos.items()):
-        mejor = sorted(variantes, key=lambda x: prioridad(x["nombre"]))[0]
-        canales.append({
-            "nombre": nombre_base,
-            "acestream_id": mejor["id"],
-            "categoria": get_categoria(nombre_base),
-        })
+        # Par nombre + acestream://ID
+        if cat_actual and line and not line.startswith("AceStream") and \
+                not line.startswith("Generated") and not line.startswith("Total:") and \
+                not line.startswith("====="):
+            # ¿siguiente línea es acestream?  
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            if j < len(lines) and lines[j].strip().startswith("acestream://"):
+                nombre_raw = line
+                ace_id = lines[j].strip().replace("acestream://", "").strip()
+                if len(ace_id) == 40 and re.fullmatch(r"[0-9a-f]+", ace_id):
+                    # Limpiar nombre: quitar * y ** del final
+                    nombre = re.sub(r"\s+\*+\s*$", "", nombre_raw).strip()
+                    canales_actuales.append({
+                        "nombre": nombre,
+                        "acestream_id": ace_id,
+                        "short_id": ace_id[:4],
+                        "fuente": "ELCANO",
+                    })
+                i = j + 1
+                continue
+        i += 1
 
-    # Ordenar: por categoría y luego por nombre
-    orden_cat = {"DAZN": 0, "Movistar": 1, "LaLiga": 2, "Champions": 3, "General": 4}
-    canales.sort(key=lambda c: (orden_cat.get(c["categoria"], 9), c["nombre"]))
-    return canales
+    # Última categoría pendiente
+    if cat_actual and canales_actuales:
+        categorias.append({"nombre": cat_actual, "canales": canales_actuales})
+
+    total = sum(len(c["canales"]) for c in categorias)
+    return categorias, total
 
 
 # ---------------------------------------------------------------------------
@@ -205,18 +208,15 @@ def main():
     print("Descargando hashes.txt desde ELCANO...")
     texto_canales = fetch(URL_CANALES, timeout=30)
     if not texto_canales:
-        print("Intentando hashes_acestream.m3u...")
-        texto_canales = fetch(URL_CANALES_M3U, timeout=20)
-    if not texto_canales:
         print("Intentando hashes_kodi.m3u...")
         texto_canales = fetch(URL_CANALES_ALT, timeout=20)
 
     if texto_canales:
-        canales = build_canales(texto_canales)
+        categorias, total = build_canales(texto_canales)
         with open("data/canales.json", "w", encoding="utf-8") as f:
-            json.dump({"canales": canales, "total": len(canales)}, f,
+            json.dump({"categorias": categorias, "total": total}, f,
                       ensure_ascii=False, indent=2)
-        print(f"  ✓ {len(canales)} canales guardados en data/canales.json")
+        print(f"  ✓ {total} canales en {len(categorias)} categorías guardados en data/canales.json")
     else:
         print("  ✗ No se pudo obtener la lista de canales", file=sys.stderr)
         sys.exit(1)

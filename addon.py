@@ -106,11 +106,213 @@ def main_menu():
 
 
 # ---------------------------------------------------------------------------
-# Canales hardcodeados (ELCANO + NEW ERA + NEW LOOP)
+# Fallback: canales hardcodeados (ELCANO) usados si GitHub Pages no responde
 # ---------------------------------------------------------------------------
-CANALES_HARDCODED = [
-    # --- DAZN ---
-    {'nombre': 'DAZN 1 FHD',          'acestream_id': '691739972eb3468cf16b25e84dafdeaa40dead6d', 'categoria': 'DAZN'},
+CANALES_FALLBACK = [
+    {'categoria': 'DAZN',      'nombre': 'DAZN 1',           'acestream_id': '9afc89481b721ce6c326c85e47148676077b8e62', 'fuente': 'ELCANO'},
+    {'categoria': 'DAZN',      'nombre': 'DAZN 2 1080p',     'acestream_id': '13a16a0630ae87bd97d6ba4165963c201c9a2e9c', 'fuente': 'ELCANO'},
+    {'categoria': 'DAZN',      'nombre': 'DAZN 3',           'acestream_id': 'e1ccce973c71547a8acda770885cb1c30a9cf3e1', 'fuente': 'ELCANO'},
+    {'categoria': 'LA LIGA',   'nombre': 'DAZN LaLiga 1080p','acestream_id': 'cc108ae39f92c48f6c946763047bd1c9b7b7d889', 'fuente': 'ELCANO'},
+    {'categoria': 'LA LIGA',   'nombre': 'M+ LaLiga 1080p',  'acestream_id': '0febfb5cac3384f487d55c559bbfc877db2d0357', 'fuente': 'ELCANO'},
+    {'categoria': 'HYPERMOTION','nombre': 'LaLiga TV Hypermotion 1080p','acestream_id': '4636ed75106cb00e9c70cc2029edf0a4df7ad73f','fuente':'ELCANO'},
+    {'categoria': 'LIGA DE CAMPEONES','nombre': 'M+ Liga de Campeones 1080p','acestream_id': '91b2a1fe85f5bb4a6cf9ef6d01cc65883d986920','fuente':'ELCANO'},
+    {'categoria': 'EUROSPORT', 'nombre': 'Eurosport 1 1080p','acestream_id': '48a589dbeab3544662fafd79888aada7d834cfe9', 'fuente': 'ELCANO'},
+]
+
+
+# ---------------------------------------------------------------------------
+# Cache en memoria para no descargar canales.json en cada apertura de carpeta
+# ---------------------------------------------------------------------------
+_canales_cache = None
+
+
+def _get_categorias():
+    """Descarga canales.json y devuelve la lista de categorías. Usa caché."""
+    global _canales_cache
+    if _canales_cache is not None:
+        return _canales_cache
+
+    data_text = fetch_url(DATA_URL_CANALES)
+    if data_text:
+        try:
+            data = json.loads(data_text)
+            cats = data.get('categorias', [])
+            if cats:
+                _canales_cache = cats
+                return cats
+        except (ValueError, KeyError) as e:
+            log('Error parsing canales.json: {}'.format(str(e)), xbmc.LOGERROR)
+
+    # Fallback: convertir la lista plana en [{"nombre": cat, "canales": [...]}]
+    log('Usando canales fallback', xbmc.LOGWARNING)
+    grupos = {}
+    for c in CANALES_FALLBACK:
+        cat = c['categoria']
+        if cat not in grupos:
+            grupos[cat] = []
+        grupos[cat].append(c)
+    return [{'nombre': k, 'canales': v} for k, v in grupos.items()]
+
+
+# ---------------------------------------------------------------------------
+# Sección CANALES  → muestra las subcategorías
+# ---------------------------------------------------------------------------
+def show_canales():
+    xbmcplugin.setPluginCategory(HANDLE, 'Canales')
+    xbmcplugin.setContent(HANDLE, 'files')
+
+    categorias = _get_categorias()
+    for cat in categorias:
+        nombre = cat['nombre']
+        total  = len(cat.get('canales', []))
+        label  = '[COLOR FF00FFFF]{}[/COLOR]  ({})'.format(nombre, total)
+
+        li = xbmcgui.ListItem(label)
+        li.setArt({'icon': ICON, 'thumb': ICON, 'fanart': FANART})
+        li.setInfo('video', {'title': nombre})
+        url = build_url({'mode': 'categoria', 'cat': nombre})
+        xbmcplugin.addDirectoryItem(HANDLE, url, li, True)
+
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+# ---------------------------------------------------------------------------
+# Sección de CATEGORÍA  → muestra todos los enlaces de esa categoría
+# formato: "NOMBRE short_id --> FUENTE"  (igual que KodispainTV)
+# ---------------------------------------------------------------------------
+def show_categoria(cat_nombre):
+    xbmcplugin.setPluginCategory(HANDLE, cat_nombre)
+    xbmcplugin.setContent(HANDLE, 'videos')
+
+    categorias = _get_categorias()
+    canales = []
+    for cat in categorias:
+        if cat['nombre'].upper() == cat_nombre.upper():
+            canales = cat.get('canales', [])
+            break
+
+    if not canales:
+        xbmcgui.Dialog().notification(ADDON_NAME, 'No hay canales en esta categoría', ICON, 3000)
+        xbmcplugin.endOfDirectory(HANDLE)
+        return
+
+    for canal in canales:
+        nombre       = canal.get('nombre', '')
+        acestream_id = canal.get('acestream_id', '')
+        short_id     = canal.get('short_id', acestream_id[:4] if acestream_id else '')
+        fuente       = canal.get('fuente', 'ELCANO')
+
+        # Formato idéntico al de KodispainTV: "NOMBRE short_id --> FUENTE"
+        label = '{} {} --> {}'.format(nombre, short_id, fuente)
+
+        li = xbmcgui.ListItem(label)
+        li.setArt({'icon': ICON, 'thumb': ICON, 'fanart': FANART})
+        li.setInfo('video', {'title': label, 'genre': cat_nombre, 'mediatype': 'video'})
+        li.setProperty('IsPlayable', 'true')
+
+        ace_url = build_url({'mode': 'play', 'acestream_id': acestream_id, 'title': label})
+        xbmcplugin.addDirectoryItem(HANDLE, ace_url, li, False)
+
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+# ---------------------------------------------------------------------------
+# Sección AGENDA
+# ---------------------------------------------------------------------------
+def show_agenda():
+    xbmcplugin.setPluginCategory(HANDLE, 'Agenda')
+    xbmcplugin.setContent(HANDLE, 'videos')
+
+    data_text = fetch_url(DATA_URL_AGENDA)
+    if not data_text:
+        xbmcplugin.endOfDirectory(HANDLE)
+        return
+
+    try:
+        data    = json.loads(data_text)
+        eventos = data.get('eventos', [])
+
+        if not eventos:
+            xbmcgui.Dialog().notification(ADDON_NAME, 'No hay eventos en la agenda', ICON, 4000)
+            xbmcplugin.endOfDirectory(HANDLE)
+            return
+
+        for evento in eventos:
+            titulo       = evento.get('titulo', 'Evento')
+            acestream_id = evento.get('acestream_id', '')
+            fecha        = evento.get('fecha', '')
+            hora         = evento.get('hora', '')
+
+            if not acestream_id:
+                continue
+
+            if hora:
+                label = '[COLOR FFFFFF00]{}[/COLOR]  {}'.format(hora, titulo)
+            elif fecha:
+                label = '[COLOR FFFFFF00]{}[/COLOR]  {}'.format(fecha, titulo)
+            else:
+                label = titulo
+
+            li = xbmcgui.ListItem(label)
+            li.setArt({'icon': ICON, 'thumb': ICON, 'fanart': FANART})
+            li.setInfo('video', {
+                'title'    : titulo,
+                'plot'     : '{} {}'.format(fecha, hora).strip(),
+                'mediatype': 'video'
+            })
+            li.setProperty('IsPlayable', 'true')
+
+            ace_url = build_url({'mode': 'play', 'acestream_id': acestream_id, 'title': titulo})
+            xbmcplugin.addDirectoryItem(HANDLE, ace_url, li, False)
+
+    except (ValueError, KeyError) as e:
+        log('Error parsing agenda.json: {}'.format(str(e)), xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(ADDON_NAME, 'Error al cargar la agenda', ICON, 5000)
+
+    xbmcplugin.endOfDirectory(HANDLE)
+
+
+# ---------------------------------------------------------------------------
+# Reproducción vía Acestream
+# ---------------------------------------------------------------------------
+def play_acestream(acestream_id, title=''):
+    port       = ACESTREAM_PORT
+    stream_url = 'http://127.0.0.1:{}/ace/getstream?id={}'.format(port, acestream_id)
+    log('Reproduciendo acestream: {}'.format(stream_url))
+    li = xbmcgui.ListItem(label=title, path=stream_url)
+    li.setMimeType('video/mp4')
+    li.setContentLookup(False)
+    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+
+
+# ---------------------------------------------------------------------------
+# Router principal
+# ---------------------------------------------------------------------------
+def router():
+    mode = PARAMS.get('mode')
+
+    if mode is None:
+        main_menu()
+    elif mode == 'canales':
+        show_canales()
+    elif mode == 'categoria':
+        show_categoria(PARAMS.get('cat', ''))
+    elif mode == 'agenda':
+        show_agenda()
+    elif mode == 'play':
+        acestream_id = PARAMS.get('acestream_id', '')
+        title        = unquote_plus(PARAMS.get('title', ''))
+        if acestream_id:
+            play_acestream(acestream_id, title)
+        else:
+            xbmcgui.Dialog().notification(ADDON_NAME, 'ID de Acestream no válido', ICON, 4000)
+    else:
+        main_menu()
+
+
+if __name__ == '__main__':
+    router()
+
     {'nombre': 'DAZN 2 FHD',          'acestream_id': '8b081c8afbd9beafc8c5fbf0115eb36eadb07a35', 'categoria': 'DAZN'},
     {'nombre': 'DAZN 3 FHD',          'acestream_id': 'd641cd0fca0f467b3130754a091e2f4d22e68eb1', 'categoria': 'DAZN'},
     {'nombre': 'DAZN 4 FHD',          'acestream_id': '7e27e46c25d4308d16098d9dc67fcd8736e8c1f0', 'categoria': 'DAZN'},
