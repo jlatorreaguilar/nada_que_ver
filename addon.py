@@ -6,7 +6,7 @@ import sys
 import os
 import json
 
-from urllib.parse import urlencode, parse_qsl, unquote_plus, quote_plus
+from urllib.parse import urlencode, parse_qsl, unquote_plus
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
