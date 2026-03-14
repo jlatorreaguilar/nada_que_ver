@@ -37,6 +37,7 @@ def _get_setting(key, default=''):
 
 
 ACESTREAM_PORT   = _get_setting('acestream_port', '6878')
+PLAYBACK_MODE    = _get_setting('playback_mode', '0')   # '0' = HTTP Engine, '1' = Horus
 DATA_URL_CANALES = 'https://jlatorreaguilar.github.io/jodeteTebas/data/canales.json'
 DATA_URL_AGENDA  = 'https://jlatorreaguilar.github.io/jodeteTebas/data/agenda.json'
 
@@ -276,13 +277,19 @@ def show_agenda():
 # Reproducción vía Acestream
 # ---------------------------------------------------------------------------
 def play_acestream(acestream_id, title=''):
-    port       = ACESTREAM_PORT
-    stream_url = 'http://127.0.0.1:{}/ace/getstream?id={}'.format(port, acestream_id)
-    log('Reproduciendo acestream: {}'.format(stream_url))
-    li = xbmcgui.ListItem(label=title, path=stream_url)
-    li.setMimeType('video/mp4')
-    li.setContentLookup(False)
-    xbmcplugin.setResolvedUrl(HANDLE, True, li)
+    if PLAYBACK_MODE == '1':
+        # Horus: delega en script.module.horus (necesario en Android TV)
+        stream_url = 'plugin://script.module.horus?action=play&id={}'.format(acestream_id)
+        log('Reproduciendo via Horus: {}'.format(stream_url))
+        xbmc.executebuiltin('RunPlugin({})'.format(stream_url))
+    else:
+        # HTTP Engine local (PC / Linux con Acestream instalado)
+        stream_url = 'http://127.0.0.1:{}/ace/getstream?id={}'.format(ACESTREAM_PORT, acestream_id)
+        log('Reproduciendo via HTTP Engine: {}'.format(stream_url))
+        li = xbmcgui.ListItem(label=title, path=stream_url)
+        li.setMimeType('video/mp4')
+        li.setContentLookup(False)
+        xbmcplugin.setResolvedUrl(HANDLE, True, li)
 
 
 # ---------------------------------------------------------------------------
